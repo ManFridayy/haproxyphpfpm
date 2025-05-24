@@ -1,0 +1,82 @@
+services:
+  haproxy:
+    image: haproxy:2.9-alpine
+    container_name: haproxy
+    ports:
+      - "80:80"
+      - "8404:8404"
+    volumes:
+      - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    tmpfs:
+      - /var/run/haproxy:mode=1777
+    networks: [hisnetwork]
+    depends_on: [app-nginx] # บูต proxy หลังมี backend อย่างน้อย 1
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "4"
+          memory: 1G
+      placement:
+        max_replicas_per_node: 1
+    cap_add:
+      - SYS_RESOURCE # ให้สิทธิยกระดับ rlimit
+    ulimits:
+      nofile: 1048576
+    restart: always
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "echo 'show info' | socat - UNIX-CONNECT:/tmp/haproxy.sock || exit 1",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  app-nginx:
+    image: nginx:1.27-alpine
+    volumes:
+      - ../www:/var/www/html
+      - ./php/nginx-main.conf:/etc/nginx/nginx.conf:ro
+    networks: [hisnetwork]
+    depends_on: [app-php]
+    deploy:
+      replicas: 10
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
+    ulimits:
+      nofile: 1048576
+    restart: always
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  app-php:
+    image: mf/php:7.4-fpm
+    volumes:
+      - ../www:/var/www/html
+      - ./php/php.ini:/usr/local/etc/php/conf.d/zz-custom.ini:ro
+      - ./php/php-fpm.conf:/usr/local/etc/php-fpm.d/z-highload.conf:ro
+    networks: [hisnetwork]
+    deploy:
+      replicas: 10
+      resources:
+        limits:
+          cpus: "0.6"
+          memory: 5G
+    environment:
+      - PHP_MEMORY_LIMIT=512M
+    restart: always
+    healthcheck:
+      test: ["CMD", "php", "-r", "echo 'OK';"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+networks:
+  hisnetwork:
